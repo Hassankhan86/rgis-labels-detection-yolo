@@ -2,12 +2,24 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show compute;
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/error/exceptions.dart';
 import '../../domain/entities/saved_capture.dart';
+
+/// Decodes just the first frame of a GIF and re-encodes it as a standalone
+/// PNG — top-level so it can run via [compute] on a background isolate
+/// (still real decode/encode work, just for one frame instead of the whole
+/// session). Returns `null` if [gifBytes] doesn't decode as a GIF.
+Uint8List? _decodeFirstGifFrameAsPng(Uint8List gifBytes) {
+  final frame = img.GifDecoder().decode(gifBytes, frame: 0);
+  if (frame == null) return null;
+  return img.encodePng(frame);
+}
 
 /// Persists captures as PNG files under the app's documents directory, with
 /// a small JSON index file (id, path, timestamp, detection count) alongside
@@ -76,9 +88,11 @@ class LocalStorageDatasource {
   }
 
   /// [imageBytes] is an animated GIF (camera + boxes + HUD, one frame per
-  /// processed detection result — see `LiveCameraScreen._captureGifFrame`),
-  /// not a still image; `Image.file`/`Image.memory` autoplay GIFs, so the
-  /// gallery and detail screens need no special handling to play it back.
+  /// [LiveCameraScreen._gifCaptureTimer] tick) — `Image.file`/`Image.memory`
+  /// autoplay animated GIFs, so the detail screen needs no special handling
+  /// to play it back, but the gallery grid needs a static
+  /// [SavedCapture.thumbnailPath] instead (see its doc comment) or every
+  /// saved session would play at once in the grid.
   Future<SavedCapture> saveLiveSession({
     required Uint8List imageBytes,
     required int totalUniqueLabels,
@@ -94,9 +108,23 @@ class LocalStorageDatasource {
       throw StorageException('Could not write session video: $e');
     }
 
+    String? thumbnailPath;
+    try {
+      final thumbBytes = await compute(_decodeFirstGifFrameAsPng, imageBytes);
+      if (thumbBytes != null) {
+        final path = p.join(dir.path, '${id}_thumb.png');
+        await File(path).writeAsBytes(thumbBytes);
+        thumbnailPath = path;
+      }
+    } catch (_) {
+      // Thumbnail is a nice-to-have; grid items fall back to the GIF
+      // itself (autoplaying) if this fails, same as before it existed.
+    }
+
     final capture = SavedCapture(
       id: id,
       imagePath: imagePath,
+      thumbnailPath: thumbnailPath,
       timestamp: DateTime.now(),
       detectionCount: totalUniqueLabels,
       source: CaptureSource.liveSession,
@@ -114,6 +142,13 @@ class LocalStorageDatasource {
     final file = File(capture.imagePath);
     if (await file.exists()) {
       await file.delete();
+    }
+    final thumbnailPath = capture.thumbnailPath;
+    if (thumbnailPath != null) {
+      final thumbnailFile = File(thumbnailPath);
+      if (await thumbnailFile.exists()) {
+        await thumbnailFile.delete();
+      }
     }
     final captures = await readIndex();
     captures.removeWhere((c) => c.id == capture.id);

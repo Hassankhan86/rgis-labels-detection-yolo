@@ -92,11 +92,24 @@ Float32List imageToNchwFloat32(img.Image image) {
 
 /// Maps a box from letterboxed model-input space back to the original
 /// image's pixel space, clamping to the image bounds.
-Box unletterboxBox(Box modelSpaceBox, LetterboxResult meta) {
-  double toOriginalX(double x) => ((x - meta.padX) / meta.scale)
-      .clamp(0, meta.originalWidth.toDouble());
-  double toOriginalY(double y) => ((y - meta.padY) / meta.scale)
-      .clamp(0, meta.originalHeight.toDouble());
+///
+/// Takes the plain letterbox scalars rather than a [LetterboxResult] so
+/// callers that build their input tensor on a background isolate (see the
+/// live tracking pipeline) can carry just these across the isolate boundary
+/// instead of the padded [img.Image] itself, which is no longer needed once
+/// the tensor is built.
+Box unletterboxBox(
+  Box modelSpaceBox, {
+  required double scale,
+  required int padX,
+  required int padY,
+  required int originalWidth,
+  required int originalHeight,
+}) {
+  double toOriginalX(double x) =>
+      ((x - padX) / scale).clamp(0, originalWidth.toDouble());
+  double toOriginalY(double y) =>
+      ((y - padY) / scale).clamp(0, originalHeight.toDouble());
 
   return Box(
     left: toOriginalX(modelSpaceBox.left),

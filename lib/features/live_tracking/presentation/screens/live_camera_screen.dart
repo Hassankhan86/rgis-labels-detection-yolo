@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -5,13 +6,13 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image/image.dart' as img;
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../../../core/router/app_router.dart';
 import '../../../detection/presentation/providers/detection_providers.dart';
 import '../../../gallery/presentation/providers/gallery_providers.dart';
 import '../../../settings/presentation/providers/settings_providers.dart';
+import '../../data/gif/gif_capture_worker.dart';
 import '../../domain/entities/session_summary.dart';
 import '../providers/live_tracking_state_provider.dart';
 import '../widgets/live_hud.dart';
@@ -41,11 +42,45 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
   final GlobalKey _captureBoundaryKey = GlobalKey();
 
   /// Accumulates one frame (camera + boxes + HUD, exactly what's on screen)
-  /// per processed detection result for the whole session, so Save produces
-  /// an animated GIF of the session rather than a single still image. Fresh
-  /// per session (created in [_start], finished in [_stop]).
-  img.GifEncoder? _gifEncoder;
-  bool _capturingGifFrame = false;
+  /// per [_gifCaptureTimer] tick for the whole session, so Save produces an
+  /// animated GIF that shows continuous motion like the live view, rather
+  /// than one frame per (much slower, inference-bound) detection result.
+  /// Fresh per session (created in [_start], disposed in [_stop] /
+  /// [_endSessionIfRunning]). Encodes on its own background isolate — see
+  /// [GifCaptureWorker] — so GIF encoding never blocks the UI isolate that's
+  /// also rendering the camera preview.
+  GifCaptureWorker? _gifWorker;
+
+  /// Covers only the UI-isolate half of a capture (finding the
+  /// RepaintBoundary, `toImage`/`toByteData`) — re-entrancy guard so two
+  /// overlapping calls don't both try to rasterize at once. The
+  /// worker-isolate encode half has its own, separate backpressure via
+  /// [GifCaptureWorker.isBusy].
+  bool _captureInFlight = false;
+
+  /// Drives [_captureGifFrame] on a fixed cadence, independent of the
+  /// detection pipeline's own (much slower, inference-bound) cadence.
+  ///
+  /// Originally a GIF frame was captured once per processed *detection*
+  /// result instead — since inference can take several seconds per frame
+  /// on-device, that produced a session GIF with only a handful of frames
+  /// total, played back as a slideshow rather than anything resembling the
+  /// live camera feed. Capturing on its own timer instead means the saved
+  /// video's motion smoothness is decoupled from detection speed: each tick
+  /// grabs whatever's currently on screen (camera + whatever overlay is
+  /// current, even if it's several ticks old / mid-"coast" — see
+  /// `BoxSmoother`), so the background keeps moving continuously between
+  /// detection updates instead of jumping between a handful of far-apart
+  /// snapshots.
+  Timer? _gifCaptureTimer;
+  // 150ms (~6.7fps) originally — bumped up now that `GifCaptureWorker`
+  // reuses one trained palette across frames instead of retraining a new
+  // one on every single `addFrame()` call (see its `_paletteRefreshInterval`
+  // doc comment), which was the real per-frame cost. 100ms (~10fps) is
+  // still far off real video, but should read as noticeably smoother motion
+  // than the previous interval without outrunning what a background isolate
+  // doing per-pixel palette lookup + LZW can keep up with on this hardware.
+  static const _gifCaptureInterval = Duration(milliseconds: 100);
 
   @override
   void initState() {
@@ -111,7 +146,14 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
         _streaming = false;
       }
       ref.read(liveTrackingStateProvider.notifier).stopSession();
-      _gifEncoder = null;
+      _gifCaptureTimer?.cancel();
+      _gifCaptureTimer = null;
+      // Abandoning mid-session (e.g. app backgrounded): unlike the old
+      // plain `img.GifEncoder`, `_gifWorker` holds a live background
+      // `Isolate` — an OS-level resource — so it must be explicitly
+      // disposed here rather than just dropping the reference.
+      _gifWorker?.dispose();
+      _gifWorker = null;
     }
   }
 
@@ -121,7 +163,16 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
     ref
         .read(liveTrackingStateProvider.notifier)
         .startSession(sensorOrientation: controller.description.sensorOrientation);
-    _gifEncoder = img.GifEncoder(delay: 150, repeat: 0);
+    _gifWorker = GifCaptureWorker();
+    // Not awaited: spawning the worker isolate shouldn't delay the camera
+    // stream starting. addFrame()/isBusy are safe to call before the
+    // ready handshake lands — a capture attempted in that window is just
+    // dropped, which costs at most the session's first frame or two.
+    unawaited(_gifWorker!.start());
+    _gifCaptureTimer = Timer.periodic(
+      _gifCaptureInterval,
+      (_) => _captureGifFrame(),
+    );
     await controller.startImageStream((CameraImage image) {
       ref.read(liveTrackingStateProvider.notifier).processFrame(image);
     });
@@ -131,35 +182,36 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
   /// Renders whatever's currently in the capture boundary (camera + boxes +
   /// HUD — exactly what's on screen, since the boundary sits above the
   /// preview and below the Start/Stop button, see [_buildBody]) into the
-  /// session's GIF as one more frame. Downscaled before encoding since GIF
-  /// quantization cost scales with pixel count and a session can accumulate
-  /// many frames.
+  /// session's GIF as one more frame. The actual encode (palette
+  /// quantization, dithering, LZW) happens on [_gifWorker]'s background
+  /// isolate, not here — this method only does the parts that must run on
+  /// the UI isolate (finding the RepaintBoundary, rasterizing it) plus a
+  /// cheap hand-off of the raw pixels.
   Future<void> _captureGifFrame() async {
-    final encoder = _gifEncoder;
-    if (encoder == null || _capturingGifFrame) return;
-    _capturingGifFrame = true;
+    final worker = _gifWorker;
+    if (worker == null || _captureInFlight || worker.isBusy) return;
+    _captureInFlight = true;
     try {
       final boundary =
           _captureBoundaryKey.currentContext?.findRenderObject()
               as RenderRepaintBoundary?;
       if (boundary == null) return;
       final uiImage = await boundary.toImage(pixelRatio: 1.0);
-      final byteData = await uiImage.toByteData(
-        format: ui.ImageByteFormat.rawRgba,
-      );
-      if (byteData == null) return;
-      var frame = img.Image.fromBytes(
-        width: uiImage.width,
-        height: uiImage.height,
-        bytes: byteData.buffer,
-        order: img.ChannelOrder.rgba,
-      );
-      if (frame.width > 480) {
-        frame = img.copyResize(frame, width: 480);
+      try {
+        final byteData = await uiImage.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
+        if (byteData == null) return;
+        worker.addFrame(
+          width: uiImage.width,
+          height: uiImage.height,
+          pixels: byteData,
+        );
+      } finally {
+        uiImage.dispose();
       }
-      encoder.addFrame(frame);
     } finally {
-      _capturingGifFrame = false;
+      _captureInFlight = false;
     }
   }
 
@@ -169,13 +221,16 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
       await controller.stopImageStream();
       _streaming = false;
     }
+    _gifCaptureTimer?.cancel();
+    _gifCaptureTimer = null;
 
     // One more frame *before* stopping the session: stopping clears
     // `lastResult` (so the overlay's boxes disappear on the very next
     // rebuild), so capturing after would miss the last result's boxes.
     await _captureGifFrame();
-    final gifBytes = _gifEncoder?.finish();
-    _gifEncoder = null;
+    final gifBytes = await _gifWorker?.finish();
+    _gifWorker?.dispose();
+    _gifWorker = null;
 
     final summary = ref.read(liveTrackingStateProvider.notifier).stopSession();
     if (!mounted) return;
@@ -248,7 +303,10 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
       }
     }
     _controller?.dispose();
-    _gifEncoder = null;
+    _gifCaptureTimer?.cancel();
+    _gifCaptureTimer = null;
+    _gifWorker?.dispose();
+    _gifWorker = null;
     super.dispose();
   }
 
@@ -256,17 +314,6 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
   Widget build(BuildContext context) {
     final modelState = ref.watch(modelLoaderProvider);
     final liveState = ref.watch(liveTrackingStateProvider);
-
-    // Add one GIF frame per processed detection result, so the saved
-    // animation reflects our real (inference-bound) cadence rather than
-    // sampling on a separate timer.
-    ref.listen<LiveUiState>(liveTrackingStateProvider, (previous, next) {
-      if (next.phase == LiveSessionPhase.running &&
-          next.lastResult != null &&
-          !identical(next.lastResult, previous?.lastResult)) {
-        _captureGifFrame();
-      }
-    });
 
     return Scaffold(
       appBar: AppBar(
@@ -376,7 +423,10 @@ class _LiveCameraScreenState extends ConsumerState<LiveCameraScreen>
                   Positioned(
                     top: 16,
                     left: 16,
-                    child: LiveHud(result: result),
+                    child: LiveHud(
+                      result: result,
+                      measuredFps: liveState.measuredFps,
+                    ),
                   ),
                 ],
               ),

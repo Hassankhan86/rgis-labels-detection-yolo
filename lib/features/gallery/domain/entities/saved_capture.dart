@@ -12,11 +12,23 @@ class SavedCapture {
     this.source = CaptureSource.capture,
     this.perClassBreakdown,
     this.framesProcessed,
+    this.thumbnailPath,
   });
 
   final String id;
   final String imagePath;
   final DateTime timestamp;
+
+  /// A static (non-animated) first-frame preview of [imagePath], only set
+  /// for [CaptureSource.liveSession] entries (a `.gif`). `Image.file`/
+  /// `Image.memory` autoplay animated GIFs, so the gallery grid — which
+  /// would otherwise show every saved session looping at once — renders
+  /// this instead and reserves the full animated GIF for the detail screen.
+  /// Null for plain [CaptureSource.capture] entries (already a still PNG,
+  /// nothing to extract) and for older live-session entries saved before
+  /// this field existed; callers should fall back to [imagePath] in both
+  /// cases.
+  final String? thumbnailPath;
 
   /// Detections in the photo (capture) or total unique labels counted
   /// across the session (live session).
@@ -38,6 +50,7 @@ class SavedCapture {
     'source': source.name,
     if (perClassBreakdown != null) 'perClassBreakdown': perClassBreakdown,
     if (framesProcessed != null) 'framesProcessed': framesProcessed,
+    if (thumbnailPath != null) 'thumbnailPath': thumbnailPath,
   };
 
   factory SavedCapture.fromJson(Map<String, dynamic> json) => SavedCapture(
@@ -53,5 +66,6 @@ class SavedCapture {
     perClassBreakdown: (json['perClassBreakdown'] as Map<String, dynamic>?)
         ?.map((key, value) => MapEntry(key, value as int)),
     framesProcessed: json['framesProcessed'] as int?,
+    thumbnailPath: json['thumbnailPath'] as String?,
   );
 }

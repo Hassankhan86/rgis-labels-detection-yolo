@@ -42,6 +42,9 @@ class OnnxDetectionEngine implements DetectionEngine {
   String get backendName => 'ONNX Runtime';
 
   @override
+  int get inputSize => _inputSize;
+
+  @override
   Future<void> loadModel({
     required Uint8List modelBytes,
     required List<String> labels,
@@ -53,13 +56,45 @@ class OnnxDetectionEngine implements DetectionEngine {
       final modelFile = File('${tempDir.path}/rgis_model.onnx');
       await modelFile.writeAsBytes(modelBytes, flush: true);
 
+      // Hardware-accelerated execution providers, tried in order with the
+      // plain CPU provider as the guaranteed final fallback (ORT falls back
+      // per-node to the next provider in this list for anything the
+      // preceding one can't run) — plain CPU alone was measured at ~3.3s of
+      // inference time per 960x960 frame on a mid-range Android phone,
+      // which is what made live detection feel like it was updating once
+      // every several seconds. NNAPI/CoreML are platform-specific (the
+      // plugin's iOS side errors on an unrecognized provider name like
+      // "NNAPI", so this can't be a single cross-platform list); XNNPACK is
+      // a faster CPU kernel implementation available on both.
+      final providers = <OrtProvider>[
+        if (Platform.isAndroid) OrtProvider.NNAPI,
+        if (Platform.isIOS) OrtProvider.CORE_ML,
+        OrtProvider.XNNPACK,
+        OrtProvider.CPU,
+      ];
+
       final session = await _runtime.createSession(
         modelFile.path,
-        options: OrtSessionOptions(intraOpNumThreads: 2),
+        options: OrtSessionOptions(intraOpNumThreads: 4, providers: providers),
       );
       _session = session;
       _labels = labels;
       _inputSize = await _detectInputSize(session);
+
+      // Diagnostic only: requesting a provider doesn't guarantee it
+      // actually accelerates anything (ORT silently falls back per-node to
+      // the next provider in the list for ops it can't run), so this is
+      // the only way to see from the device's own log whether NNAPI/
+      // XNNPACK are really present here, as opposed to guessing from
+      // inference-time measurements alone.
+      try {
+        final available = await _runtime.getAvailableProviders();
+        // ignore: avoid_print
+        print('[OnnxDetectionEngine] requested=$providers available=$available');
+      } catch (e) {
+        // ignore: avoid_print
+        print('[OnnxDetectionEngine] getAvailableProviders failed: $e');
+      }
     } catch (e) {
       throw ModelLoadException('Failed to load ONNX model: $e');
     }
@@ -91,6 +126,57 @@ class OnnxDetectionEngine implements DetectionEngine {
     img.Image image, {
     required double confidenceThreshold,
     required double iouThreshold,
+  }) {
+    final letterboxed = letterboxResize(image, _inputSize);
+    final inputData = imageToNchwFloat32(letterboxed.image);
+    return _runOnTensor(
+      inputData: inputData,
+      scale: letterboxed.scale,
+      padX: letterboxed.padX,
+      padY: letterboxed.padY,
+      originalWidth: letterboxed.originalWidth,
+      originalHeight: letterboxed.originalHeight,
+      confidenceThreshold: confidenceThreshold,
+      iouThreshold: iouThreshold,
+    );
+  }
+
+  @override
+  Future<DetectionFrame> runInferenceOnTensor({
+    required Float32List inputData,
+    required double scale,
+    required int padX,
+    required int padY,
+    required int originalWidth,
+    required int originalHeight,
+    required double confidenceThreshold,
+    required double iouThreshold,
+  }) {
+    return _runOnTensor(
+      inputData: inputData,
+      scale: scale,
+      padX: padX,
+      padY: padY,
+      originalWidth: originalWidth,
+      originalHeight: originalHeight,
+      confidenceThreshold: confidenceThreshold,
+      iouThreshold: iouThreshold,
+    );
+  }
+
+  /// Shared by [runInference] (which builds the tensor itself from a decoded
+  /// image) and [runInferenceOnTensor] (which takes an already-built one) —
+  /// everything from here on out (the actual ONNX Runtime call, decode, and
+  /// NMS) is identical either way.
+  Future<DetectionFrame> _runOnTensor({
+    required Float32List inputData,
+    required double scale,
+    required int padX,
+    required int padY,
+    required int originalWidth,
+    required int originalHeight,
+    required double confidenceThreshold,
+    required double iouThreshold,
   }) async {
     final session = _session;
     if (session == null) {
@@ -98,8 +184,6 @@ class OnnxDetectionEngine implements DetectionEngine {
     }
 
     final stopwatch = Stopwatch()..start();
-    final letterboxed = letterboxResize(image, _inputSize);
-    final inputData = imageToNchwFloat32(letterboxed.image);
     final inputShape = [1, 3, _inputSize, _inputSize];
 
     final inputTensor = await OrtValue.fromList(inputData, inputShape);
@@ -122,7 +206,11 @@ class OnnxDetectionEngine implements DetectionEngine {
 
     final detections = _decode(
       rawOutput,
-      letterboxed,
+      scale: scale,
+      padX: padX,
+      padY: padY,
+      originalWidth: originalWidth,
+      originalHeight: originalHeight,
       confidenceThreshold: confidenceThreshold,
       iouThreshold: iouThreshold,
     );
@@ -130,15 +218,19 @@ class OnnxDetectionEngine implements DetectionEngine {
 
     return DetectionFrame(
       detections: detections,
-      imageWidth: letterboxed.originalWidth,
-      imageHeight: letterboxed.originalHeight,
+      imageWidth: originalWidth,
+      imageHeight: originalHeight,
       inferenceTime: stopwatch.elapsed,
     );
   }
 
   List<Detection> _decode(
-    List<dynamic> rawOutput,
-    LetterboxResult letterboxed, {
+    List<dynamic> rawOutput, {
+    required double scale,
+    required int padX,
+    required int padY,
+    required int originalWidth,
+    required int originalHeight,
     required double confidenceThreshold,
     required double iouThreshold,
   }) {
@@ -175,7 +267,16 @@ class OnnxDetectionEngine implements DetectionEngine {
         right: cx + w / 2,
         bottom: cy + h / 2,
       );
-      boxes.add(unletterboxBox(modelSpaceBox, letterboxed));
+      boxes.add(
+        unletterboxBox(
+          modelSpaceBox,
+          scale: scale,
+          padX: padX,
+          padY: padY,
+          originalWidth: originalWidth,
+          originalHeight: originalHeight,
+        ),
+      );
       scores.add(bestScore);
       classIds.add(bestClass);
     }

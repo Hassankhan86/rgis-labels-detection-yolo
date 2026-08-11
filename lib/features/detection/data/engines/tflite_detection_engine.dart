@@ -22,6 +22,12 @@ class TFLiteDetectionEngine implements DetectionEngine {
   String get backendName => 'TensorFlow Lite (not implemented)';
 
   @override
+  int get inputSize => throw UnimplementedError(
+    'TFLiteDetectionEngine is a swap-point stub; implement with '
+    'tflite_flutter before use.',
+  );
+
+  @override
   Future<void> loadModel({
     required Uint8List modelBytes,
     required List<String> labels,
@@ -35,6 +41,23 @@ class TFLiteDetectionEngine implements DetectionEngine {
   @override
   Future<DetectionFrame> runInference(
     img.Image image, {
+    required double confidenceThreshold,
+    required double iouThreshold,
+  }) {
+    throw UnimplementedError(
+      'TFLiteDetectionEngine is a swap-point stub; implement with '
+      'tflite_flutter before use.',
+    );
+  }
+
+  @override
+  Future<DetectionFrame> runInferenceOnTensor({
+    required Float32List inputData,
+    required double scale,
+    required int padX,
+    required int padY,
+    required int originalWidth,
+    required int originalHeight,
     required double confidenceThreshold,
     required double iouThreshold,
   }) {

@@ -21,18 +21,25 @@ class LabelCounter {
   int _nextDisplayId = 1;
 
   /// Records one more matched frame for [canonical]. Returns
-  /// `(justConfirmed, displayId)` — `displayId` is null until/unless this
-  /// canonical track has reached [minHits].
+  /// `(justConfirmed, displayId)`.
+  ///
+  /// `displayId` is assigned the moment a track is first seen (so a box
+  /// drawn immediately — see [BoxSmoother.drawable] — always has a stable
+  /// number to show), independent of [minHits] confirmation, which still
+  /// gates only [confirmedIds]/[total]/[perClass].
   (bool, int?) registerHit(int canonical, int clsId) {
     _mergedHits[canonical] = (_mergedHits[canonical] ?? 0) + 1;
     mergedClass[canonical] = clsId;
+
+    if (!displayId.containsKey(canonical)) {
+      displayId[canonical] = _nextDisplayId;
+      _nextDisplayId++;
+    }
 
     var justConfirmed = false;
     if (!confirmedIds.contains(canonical) &&
         _mergedHits[canonical]! >= minHits) {
       confirmedIds.add(canonical);
-      displayId[canonical] = _nextDisplayId;
-      _nextDisplayId++;
       justConfirmed = true;
     }
     return (justConfirmed, displayId[canonical]);

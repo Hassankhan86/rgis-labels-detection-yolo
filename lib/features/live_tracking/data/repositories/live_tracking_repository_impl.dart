@@ -2,6 +2,7 @@
 // kept readable at call sites; the leading underscore below is only an
 // internal field-naming convention.
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../detection/data/engines/detection_engine.dart';
 import '../../../settings/domain/entities/app_settings.dart';
@@ -10,7 +11,7 @@ import '../../domain/entities/session_summary.dart';
 import '../../domain/entities/tracked_label.dart';
 import '../../domain/live_tracking_config.dart';
 import '../../domain/repositories/live_tracking_repository.dart';
-import '../camera/camera_image_converter.dart';
+import '../camera/live_frame_preprocessor.dart';
 import '../tracking/box_smoother.dart';
 import '../tracking/duplicate_resolver.dart';
 import '../tracking/label_counter.dart';
@@ -84,13 +85,35 @@ class LiveTrackingRepositoryImpl implements LiveTrackingRepository {
     final generation = _generation;
     _frameIndex++;
 
-    final image = convertCameraImage(
-      cameraImage,
-      sensorOrientation: _sensorOrientation,
+    final totalStopwatch = Stopwatch()..start();
+
+    // The heavy pixel work (YUV->RGB, rotate, letterbox, NCHW pack) runs on
+    // a background isolate via `compute()` so it never blocks the UI
+    // isolate that's also rendering the camera preview — doing this
+    // synchronously here was what made the preview stutter/drop frames the
+    // moment live detection started.
+    final preprocessStopwatch = Stopwatch()..start();
+    final preprocessed = await compute(
+      preprocessLiveFrame,
+      LivePreprocessArgs(
+        cameraImage: cameraImage,
+        sensorOrientation: _sensorOrientation,
+        inputSize: _engine.inputSize,
+      ),
     );
+    preprocessStopwatch.stop();
+    if (_generation != generation) {
+      throw const SessionStoppedException();
+    }
+
     final settings = _currentSettings();
-    final frame = await _engine.runInference(
-      image,
+    final frame = await _engine.runInferenceOnTensor(
+      inputData: preprocessed.inputData,
+      scale: preprocessed.scale,
+      padX: preprocessed.padX,
+      padY: preprocessed.padY,
+      originalWidth: preprocessed.originalWidth,
+      originalHeight: preprocessed.originalHeight,
       confidenceThreshold: settings.confidenceThreshold,
       iouThreshold: settings.iouThreshold,
     );
@@ -99,6 +122,7 @@ class LiveTrackingRepositoryImpl implements LiveTrackingRepository {
       throw const SessionStoppedException();
     }
 
+    final trackingStopwatch = Stopwatch()..start();
     final tracker = _tracker!;
     final resolver = _resolver!;
     final counter = _counter!;
@@ -130,7 +154,7 @@ class LiveTrackingRepositoryImpl implements LiveTrackingRepository {
       );
     }
 
-    final drawables = smoother.drawable(_frameIndex, counter.confirmedIds);
+    final drawables = smoother.drawable(_frameIndex);
     final trackedLabels = drawables
         .map(
           (d) => TrackedLabel(
@@ -143,14 +167,19 @@ class LiveTrackingRepositoryImpl implements LiveTrackingRepository {
           ),
         )
         .toList();
+    trackingStopwatch.stop();
+    totalStopwatch.stop();
 
     return LiveFrameResult(
       trackedLabels: trackedLabels,
       totalUniqueLabels: counter.total,
       frameIndex: _frameIndex,
-      frameWidth: image.width,
-      frameHeight: image.height,
+      frameWidth: frame.imageWidth,
+      frameHeight: frame.imageHeight,
+      preprocessTime: preprocessStopwatch.elapsed,
       inferenceTime: frame.inferenceTime,
+      trackingTime: trackingStopwatch.elapsed,
+      totalTime: totalStopwatch.elapsed,
     );
   }
 

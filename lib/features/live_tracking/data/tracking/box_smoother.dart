@@ -54,10 +54,20 @@ class BoxSmoother {
     _state[canonical] = _SmoothState(classId, smoothed, confidence, frameIdx);
   }
 
-  /// Every confirmed track that either has a detection this frame or is
-  /// still within its coasting window. Prunes tracks that have coasted
-  /// past their window so memory doesn't grow across a long session.
-  List<DrawableTrack> drawable(int frameIdx, Set<int> confirmedIds) {
+  /// Every track that either has a detection this frame or is still within
+  /// its coasting window. Prunes tracks that have coasted past their window
+  /// so memory doesn't grow across a long session.
+  ///
+  /// Draws as soon as a track exists rather than waiting for it to cross
+  /// [LabelCounter]'s `minHits` confirmation threshold: at this pipeline's
+  /// inference-bound, likely-sub-1fps mobile cadence (see
+  /// `LiveTrackingConfig`'s doc comment), gating the *visible* box on
+  /// several confirmed hits made the live view show nothing for seconds at
+  /// a time even while the model was detecting correctly every frame.
+  /// Confirmation still gates the *unique label count* (`LabelCounter.total`
+  /// / `perClass`), which is what actually needs to be robust to
+  /// single-frame noise — the drawn box doesn't.
+  List<DrawableTrack> drawable(int frameIdx) {
     final out = <DrawableTrack>[];
     final stale = <int>[];
     for (final entry in _state.entries) {
@@ -68,16 +78,14 @@ class BoxSmoother {
         stale.add(canonical);
         continue;
       }
-      if (confirmedIds.contains(canonical)) {
-        out.add(
-          DrawableTrack(
-            canonicalId: canonical,
-            classId: state.classId,
-            box: state.box,
-            confidence: state.confidence,
-          ),
-        );
-      }
+      out.add(
+        DrawableTrack(
+          canonicalId: canonical,
+          classId: state.classId,
+          box: state.box,
+          confidence: state.confidence,
+        ),
+      );
     }
     for (final canonical in stale) {
       _state.remove(canonical);
