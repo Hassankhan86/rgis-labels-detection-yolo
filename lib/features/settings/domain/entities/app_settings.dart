@@ -16,7 +16,7 @@ class AppSettings {
   final bool showLabels;
 
   /// When [showLabels] is on, collapse each class name to its first letter
-  /// (`price_label` -> `p`) so dense shelf scenes stay readable.
+  /// (`small` -> `s`) so dense shelf scenes stay readable.
   final bool minimizeLabels;
 
   /// Whether the confidence percentage is drawn on detection boxes.

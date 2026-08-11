@@ -43,3 +43,20 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/yolo/dataset1/
+/yolo/dataset2/
+# /yolo/dataset2_training/
+
+
+# YOLO training artifacts (split dataset copy, run checkpoints/logs, auto-downloaded weights)
+# /yolo/content/
+# /yolo/*.pt
+# /yolo/*.onnx
+/yolo/test_results/
+
+
+venv314/
+venv/
+.venv/
+__pycache__/
+.vscode

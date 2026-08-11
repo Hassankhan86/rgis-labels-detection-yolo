@@ -61,7 +61,7 @@ class SettingsScreen extends ConsumerWidget {
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Minimize labels'),
-            subtitle: const Text('Show just the first letter (price_label → p)'),
+            subtitle: const Text('Show just the first letter (small → s)'),
             value: settings.minimizeLabels,
             onChanged: settings.showLabels ? notifier.setMinimizeLabels : null,
           ),

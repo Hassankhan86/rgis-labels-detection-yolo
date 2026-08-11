@@ -228,6 +228,20 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
     );
   }
 
+  /// e.g. "3 price label(s) found (2 small, 1 large)" -- a per-class
+  /// breakdown alongside the total, since a flat count can't distinguish
+  /// which of the (now multiple) classes were actually found.
+  String _summaryText(DetectionFrame frame) {
+    if (frame.detections.isEmpty) return 'No price labels found';
+
+    final counts = <String, int>{};
+    for (final detection in frame.detections) {
+      counts[detection.label] = (counts[detection.label] ?? 0) + 1;
+    }
+    final breakdown = counts.entries.map((e) => '${e.value} ${e.key}').join(', ');
+    return '${frame.detections.length} price label(s) found ($breakdown)';
+  }
+
   Widget _buildReview(DetectionUiState state) {
     final frame = state.frame;
     final settings = ref.watch(settingsNotifierProvider);
@@ -267,7 +281,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('${frame.detections.length} price label(s) found'),
+                Text(_summaryText(frame)),
                 FpsIndicator(frame: frame),
               ],
             ),

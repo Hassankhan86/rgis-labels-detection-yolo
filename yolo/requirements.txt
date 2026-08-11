@@ -1,0 +1,7 @@
+ultralytics>=8.3.0
+pyyaml
+# optional, only used by export.py's output-shape sanity check:
+onnxruntime
+
+# YOLO26 support landed in a later ultralytics release than the pin above.
+# Before training with --arch yolo26n, run: pip install -U ultralytics

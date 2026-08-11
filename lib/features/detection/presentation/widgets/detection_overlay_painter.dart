@@ -20,7 +20,7 @@ class DetectionOverlayPainter extends CustomPainter {
   /// Whether class names are drawn on each box (from Settings).
   final bool showLabels;
 
-  /// Collapse class names to their first letter (`price_label` -> `p`).
+  /// Collapse class names to their first letter (`small` -> `s`).
   final bool minimizeLabels;
 
   /// Whether the confidence percentage is drawn on each box (from Settings).

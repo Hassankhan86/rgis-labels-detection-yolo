@@ -1,1 +1,3 @@
-price_label
+large
+medium
+small
