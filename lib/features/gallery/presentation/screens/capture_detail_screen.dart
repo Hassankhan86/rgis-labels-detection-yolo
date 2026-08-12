@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/entities/saved_capture.dart';
 import '../providers/gallery_providers.dart';
+import '../widgets/video_preview_player.dart';
 
 class CaptureDetailScreen extends ConsumerWidget {
   const CaptureDetailScreen({super.key, required this.capture});
@@ -16,7 +17,7 @@ class CaptureDetailScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          capture.source == CaptureSource.liveSession
+          capture.source == CaptureSource.liveSession || capture.source == CaptureSource.recordedVideo
               ? '${capture.detectionCount} unique price label(s)'
               : '${capture.detectionCount} price label(s)',
         ),
@@ -33,7 +34,9 @@ class CaptureDetailScreen extends ConsumerWidget {
         ],
       ),
       body: Center(
-        child: InteractiveViewer(child: Image.file(File(capture.imagePath))),
+        child: capture.source == CaptureSource.recordedVideo
+            ? VideoPreviewPlayer(videoPath: capture.imagePath)
+            : InteractiveViewer(child: Image.file(File(capture.imagePath))),
       ),
       bottomNavigationBar: SafeArea(
         child: Padding(

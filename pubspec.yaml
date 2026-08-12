@@ -42,6 +42,8 @@ dependencies:
   shared_preferences: ^2.5.5
   path: ^1.9.1
   flutter_onnxruntime: ^1.8.3
+  video_player: ^2.14.0
+  ffmpeg_kit_flutter_new: ^4.6.2
 
 dev_dependencies:
   flutter_test:

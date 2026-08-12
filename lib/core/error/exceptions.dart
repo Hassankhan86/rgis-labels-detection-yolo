@@ -19,3 +19,24 @@ class StorageException implements Exception {
   @override
   String toString() => 'StorageException: $message';
 }
+
+class VideoProbeException implements Exception {
+  VideoProbeException(this.message);
+  final String message;
+  @override
+  String toString() => 'VideoProbeException: $message';
+}
+
+class VideoExtractionException implements Exception {
+  VideoExtractionException(this.message);
+  final String message;
+  @override
+  String toString() => 'VideoExtractionException: $message';
+}
+
+class VideoEncodingException implements Exception {
+  VideoEncodingException(this.message);
+  final String message;
+  @override
+  String toString() => 'VideoEncodingException: $message';
+}

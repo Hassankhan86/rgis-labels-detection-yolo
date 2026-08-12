@@ -138,6 +138,57 @@ class LocalStorageDatasource {
     return capture;
   }
 
+  /// Copies [videoFilePath] (and [thumbnailFilePath], if given) into the
+  /// captures directory rather than reading them into memory first — a
+  /// batch-processed video can be far larger than a photo or GIF, and this
+  /// mirrors [saveCapture]/[saveLiveSession]'s pattern using `File.copy()`
+  /// instead of `writeAsBytes` of an already-in-RAM blob.
+  Future<SavedCapture> saveRecordedVideo({
+    required String videoFilePath,
+    String? thumbnailFilePath,
+    required int totalUniqueLabels,
+    required Map<String, int> perClassBreakdown,
+    required int framesProcessed,
+  }) async {
+    final dir = await _capturesDir();
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
+    final ext = p.extension(videoFilePath);
+    final destVideoPath = p.join(dir.path, '$id${ext.isEmpty ? '.mp4' : ext}');
+    try {
+      await File(videoFilePath).copy(destVideoPath);
+    } catch (e) {
+      throw StorageException('Could not copy recorded video into gallery: $e');
+    }
+
+    String? destThumbPath;
+    if (thumbnailFilePath != null) {
+      try {
+        final path = p.join(dir.path, '${id}_thumb.png');
+        await File(thumbnailFilePath).copy(path);
+        destThumbPath = path;
+      } catch (_) {
+        // Thumbnail is a nice-to-have, same fallback policy as
+        // saveLiveSession's GIF-first-frame thumbnail above.
+      }
+    }
+
+    final capture = SavedCapture(
+      id: id,
+      imagePath: destVideoPath,
+      thumbnailPath: destThumbPath,
+      timestamp: DateTime.now(),
+      detectionCount: totalUniqueLabels,
+      source: CaptureSource.recordedVideo,
+      perClassBreakdown: perClassBreakdown,
+      framesProcessed: framesProcessed,
+    );
+
+    final captures = await readIndex();
+    captures.insert(0, capture);
+    await _writeIndex(captures);
+    return capture;
+  }
+
   Future<void> deleteCapture(SavedCapture capture) async {
     final file = File(capture.imagePath);
     if (await file.exists()) {

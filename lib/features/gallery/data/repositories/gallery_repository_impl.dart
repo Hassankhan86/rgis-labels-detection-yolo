@@ -36,6 +36,23 @@ class GalleryRepositoryImpl implements GalleryRepository {
   }
 
   @override
+  Future<SavedCapture> saveRecordedVideo({
+    required String videoFilePath,
+    String? thumbnailFilePath,
+    required int totalUniqueLabels,
+    required Map<String, int> perClassBreakdown,
+    required int framesProcessed,
+  }) {
+    return _datasource.saveRecordedVideo(
+      videoFilePath: videoFilePath,
+      thumbnailFilePath: thumbnailFilePath,
+      totalUniqueLabels: totalUniqueLabels,
+      perClassBreakdown: perClassBreakdown,
+      framesProcessed: framesProcessed,
+    );
+  }
+
+  @override
   Future<List<SavedCapture>> listCaptures() => _datasource.readIndex();
 
   @override

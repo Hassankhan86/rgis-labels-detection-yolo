@@ -27,11 +27,20 @@ class GalleryGridItem extends StatelessWidget {
             // itself — and its autoplay — only for older entries saved
             // before thumbnails existed). Plain captures have no
             // thumbnailPath and are already a still image either way.
+            // Recorded videos always have a poster thumbnailPath in
+            // practice, but the errorBuilder guards the rare case that
+            // failed and this would otherwise try to decode an .mp4 as an
+            // image.
             Image.file(
               File(capture.thumbnailPath ?? capture.imagePath),
               fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Container(
+                color: Colors.black12,
+                child: const Icon(Icons.videocam, size: 32),
+              ),
             ),
-            if (capture.source == CaptureSource.liveSession)
+            if (capture.source == CaptureSource.liveSession ||
+                capture.source == CaptureSource.recordedVideo)
               const Positioned(
                 left: 4,
                 top: 4,
