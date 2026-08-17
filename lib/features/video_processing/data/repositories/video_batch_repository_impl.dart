@@ -46,7 +46,7 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
     required String sourceVideoPath,
     int frameStep = 1,
   }) async* {
-    assert(frameStep == 1, 'frameStep > 1 is a reserved seam, not yet implemented.');
+    assert(frameStep >= 1, 'frameStep must be >= 1.');
 
     final tempRoot = await Directory.systemTemp.createTemp('rgis_batch_');
     final extractedDir = Directory(p.join(tempRoot.path, 'extracted'))..createSync();
@@ -98,30 +98,37 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
           // clean ffmpeg PNG sequence; skip rather than abort the run.
         }
 
-        final letterboxed = letterboxResize(decoded, _engine.inputSize);
-        final inputData = imageToNchwFloat32(letterboxed.image);
-        final frame = await _engine.runInferenceOnTensor(
-          inputData: inputData,
-          scale: letterboxed.scale,
-          padX: letterboxed.padX,
-          padY: letterboxed.padY,
-          originalWidth: letterboxed.originalWidth,
-          originalHeight: letterboxed.originalHeight,
-          confidenceThreshold: settings.confidenceThreshold,
-          iouThreshold: settings.iouThreshold,
-        );
+        // Only every frameStep-th frame pays for a real inference; the
+        // rest just draw BoxSmoother's coasted box (still keyed by the
+        // real frameIndex, so its gap math is unaffected by skipping)
+        // so the output video stays full-length/smooth without running
+        // the model on every single frame.
+        if ((frameIndex - 1) % frameStep == 0) {
+          final letterboxed = letterboxResize(decoded, _engine.inputSize);
+          final inputData = imageToNchwFloat32(letterboxed.image);
+          final frame = await _engine.runInferenceOnTensor(
+            inputData: inputData,
+            scale: letterboxed.scale,
+            padX: letterboxed.padX,
+            padY: letterboxed.padY,
+            originalWidth: letterboxed.originalWidth,
+            originalHeight: letterboxed.originalHeight,
+            confidenceThreshold: settings.confidenceThreshold,
+            iouThreshold: settings.iouThreshold,
+          );
 
-        // ---- verbatim reuse of LiveTrackingRepositoryImpl.processFrame's
-        // tracker -> resolver -> counter -> smoother sequence, unchanged ----
-        final detectionPairs = frame.detections.map((d) => (d.box, d.classId)).toList();
-        final trackIds = tracker.update(detectionPairs);
-        for (var j = 0; j < frame.detections.length; j++) {
-          final detection = frame.detections[j];
-          final tid = trackIds[j];
-          labelNames[detection.classId] = detection.label;
-          final canonical = resolver.observe(tid, detection.classId, detection.box, frameIndex);
-          counter.registerHit(canonical, detection.classId);
-          smoother.update(canonical, detection.classId, detection.box, detection.confidence, frameIndex);
+          // ---- verbatim reuse of LiveTrackingRepositoryImpl.processFrame's
+          // tracker -> resolver -> counter -> smoother sequence, unchanged ----
+          final detectionPairs = frame.detections.map((d) => (d.box, d.classId)).toList();
+          final trackIds = tracker.update(detectionPairs);
+          for (var j = 0; j < frame.detections.length; j++) {
+            final detection = frame.detections[j];
+            final tid = trackIds[j];
+            labelNames[detection.classId] = detection.label;
+            final canonical = resolver.observe(tid, detection.classId, detection.box, frameIndex);
+            counter.registerHit(canonical, detection.classId);
+            smoother.update(canonical, detection.classId, detection.box, detection.confidence, frameIndex);
+          }
         }
         final drawables = smoother.drawable(frameIndex);
 

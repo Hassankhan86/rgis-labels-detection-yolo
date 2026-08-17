@@ -44,3 +44,10 @@ Because the calibration/training set is very small (33 images — `yolo/README.m
 - On-device timing comparison: record a same-length test video before/after, compare wall-clock time for the "Detecting & tracking" phase and the "Frame N/Total" pacing.
 - Confirm tracking/counting output (unique label count, per-class breakdown) stays sane with `videoFrameStep > 1` — not necessarily identical to `frameStep=1` (fewer fresh detections shifts exactly when `LabelCounter.minHits` gets satisfied), but not wildly different.
 - For Part B, the shape + accuracy checks in steps 2-3 are the correctness gate before the bundled asset is ever touched; step 4's on-device timing is the actual go/no-go for keeping it.
+
+
+
+
+------------
+
+The single biggest lever is already scaffolded but unused. VideoBatchRepositoryImpl.processVideo (lib/features/video_processing/data/repositories/video_batch_repository_impl.dart:45-49) takes a frameStep parameter, but it's asserted to always be 1: assert(frameStep == 1, 'frameStep > 1 is a reserved seam, not yet implemented.'). Every extracted frame currently gets a full model inference — no skipping happens today, despite CLAUDE.md describing frame-skipping as if it were live. BoxSmoother.drawable(frameIdx) (lib/features/live_tracking/data/tracking/box_smoother.dart:70-94) is a pure query that can be called on frames where update() wasn't — it already "coasts" the last smoothed box for up to coastFrames frames (default 3, lib/features/live_tracking/domain/live_tracking_config.dart:14). This means the seam can be turned on with no new tracking logic: skip inference on most frames, still draw a coasted box, still write every frame so the output video stays full-length. This is a ~3x cut in inference calls for free, with no model change and no accuracy risk on the frames that are inferred.

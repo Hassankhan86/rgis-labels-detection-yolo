@@ -45,6 +45,11 @@ app.*.map.json
 /android/app/release
 /yolo/dataset1/
 /yolo/dataset2/
+# /yolo/dataset4/
+/yolo/dataset4_aug/
+/yolo/dataset4_aug.zip
+/yolo/dataset4.zip
+
 # /yolo/dataset2_training/
 
 
@@ -53,6 +58,7 @@ app.*.map.json
 # /yolo/*.pt
 # /yolo/*.onnx
 /yolo/test_results/
+/yolo/backup-models/
 
 
 venv314/

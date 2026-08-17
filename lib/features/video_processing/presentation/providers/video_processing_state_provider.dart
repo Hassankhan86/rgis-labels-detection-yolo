@@ -39,7 +39,7 @@ class VideoProcessingNotifier extends StateNotifier<VideoProcessingUiState> {
     await _subscription?.cancel();
     state = const VideoProcessingUiState(phase: VideoProcessingPhase.extracting);
     final completer = Completer<void>();
-    _subscription = _repository.processVideo(sourceVideoPath: sourceVideoPath).listen(
+    _subscription = _repository.processVideo(sourceVideoPath: sourceVideoPath, frameStep: 3).listen(
       (progress) {
         state = VideoProcessingUiState(
           phase: _mapPhase(progress.phase),

@@ -12,9 +12,10 @@ abstract class VideoBatchRepository {
   /// if any phase fails.
   ///
   /// [frameStep] selects every Nth extracted frame for detection (1 =
-  /// every frame). Only `frameStep == 1` is implemented today — the
-  /// parameter exists as a reserved seam for a later configurable
-  /// frame-interval option.
+  /// every frame). Frames that aren't selected still get written to the
+  /// output video, annotated with `BoxSmoother`'s coasted box, so the
+  /// output stays full-length/smooth without paying for inference on every
+  /// frame.
   ///
   /// Cancelling the returned stream's subscription stops the pipeline at
   /// its next checkpoint and cleans up temp files.
