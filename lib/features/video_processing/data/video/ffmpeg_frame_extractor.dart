@@ -31,6 +31,17 @@ class FrameExtractionProgress {
 /// (`-vsync 0`: one output file per input frame) rather than decoding the
 /// whole video into memory first, so the source video is never fully
 /// resident in memory during extraction.
+///
+/// Downscales to fit within 960x960 (ffmpeg's own SIMD-accelerated scaler,
+/// not Dart) if the source is larger -- this is the model's own working
+/// resolution anyway (`AppConstants.modelInputSize`), so it costs nothing
+/// detection-wise, but it matters a lot for wall-clock time: every frame
+/// gets decoded and re-encoded as PNG in pure Dart later in the pipeline
+/// (`img.decodePng`/`img.encodePng`), unconditionally on every frame
+/// regardless of `frameStep` or which model is loaded -- extracting at full
+/// phone-camera resolution (e.g. 1080p+) made that Dart-side codec work the
+/// actual bottleneck, not model inference. `force_divisible_by=2` keeps
+/// dimensions even, which `-pix_fmt yuv420p` in the re-encode step requires.
 FrameExtractionProgress extractFrames({
   required String sourceVideoPath,
   required String outputDir,
@@ -38,7 +49,10 @@ FrameExtractionProgress extractFrames({
   final controller = StreamController<int>();
   final completer = Completer<FrameExtractionResult>();
   final pattern = '$outputDir/frame_%06d.png';
-  final command = '-hide_banner -y -i "$sourceVideoPath" -vsync 0 "$pattern"';
+  const scaleFilter =
+      "scale='min(960,iw)':'min(960,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2";
+  final command =
+      '-hide_banner -y -i "$sourceVideoPath" -vf "$scaleFilter" -vsync 0 "$pattern"';
 
   FFmpegKit.executeAsync(
     command,

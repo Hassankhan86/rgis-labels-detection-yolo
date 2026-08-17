@@ -42,6 +42,8 @@ class GalleryRepositoryImpl implements GalleryRepository {
     required int totalUniqueLabels,
     required Map<String, int> perClassBreakdown,
     required int framesProcessed,
+    double? processingDurationSeconds,
+    double? videoDurationSeconds,
   }) {
     return _datasource.saveRecordedVideo(
       videoFilePath: videoFilePath,
@@ -49,6 +51,8 @@ class GalleryRepositoryImpl implements GalleryRepository {
       totalUniqueLabels: totalUniqueLabels,
       perClassBreakdown: perClassBreakdown,
       framesProcessed: framesProcessed,
+      processingDurationSeconds: processingDurationSeconds,
+      videoDurationSeconds: videoDurationSeconds,
     );
   }
 

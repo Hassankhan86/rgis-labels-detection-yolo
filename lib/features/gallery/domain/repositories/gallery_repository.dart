@@ -25,6 +25,8 @@ abstract class GalleryRepository {
     required int totalUniqueLabels,
     required Map<String, int> perClassBreakdown,
     required int framesProcessed,
+    double? processingDurationSeconds,
+    double? videoDurationSeconds,
   });
 
   Future<List<SavedCapture>> listCaptures();

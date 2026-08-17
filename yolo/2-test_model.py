@@ -25,9 +25,10 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
 
 # OpenCV uses BGR, not RGB.
 CLASS_COLORS_BGR = {
-    "small": (0, 255, 0),    # green
-    "medium": (255, 0, 0),   # blue
-    "large": (0, 0, 255),    # red
+    "small": (0, 255, 0),        # green
+    "medium": (255, 0, 0),       # blue
+    "large": (0, 0, 255),        # red
+    "price_label": (0, 165, 255), # orange
 }
 DEFAULT_COLOR_BGR = (0, 255, 255)  # any class not in the map above
 BOX_THICKNESS = 5

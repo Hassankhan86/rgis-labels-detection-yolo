@@ -52,11 +52,27 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
     final extractedDir = Directory(p.join(tempRoot.path, 'extracted'))..createSync();
     final annotatedDir = Directory(p.join(tempRoot.path, 'annotated'))..createSync();
 
+    // Diagnostic timing only -- prints a one-line breakdown after the
+    // detecting loop so a slow run can be attributed to a specific phase
+    // instead of guessed at. Not a permanent feature; safe to remove once
+    // the current perf investigation is done.
+    final extractionWatch = Stopwatch();
+    final decodeWatch = Stopwatch();
+    final inferWatch = Stopwatch();
+    final annotateWatch = Stopwatch();
+    var inferredFrameCount = 0;
+
+    // Spans extraction through re-encode (not the final gallery copy) --
+    // surfaced to the user as "processing time" on the saved gallery entry,
+    // alongside the source video's own length (`probe.durationSeconds`).
+    final processingWatch = Stopwatch()..start();
+
     try {
       // ---- Phase 0: probe (fps + estimated frame count) ----
       final probe = await probeVideo(sourceVideoPath);
 
       // ---- Phase 1: extraction (ffmpeg -> disk, one file per frame) ----
+      extractionWatch.start();
       final extraction = extractFrames(
         sourceVideoPath: sourceVideoPath,
         outputDir: extractedDir.path,
@@ -65,6 +81,7 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
         yield BatchProgress(phase: BatchPhase.extracting, current: n, total: probe.frameCount);
       }
       await extraction.done; // rethrows VideoExtractionException on failure
+      extractionWatch.stop();
 
       // ---- Phase 2: sequential per-frame detect -> track -> count ----
       final tracker = SimpleIouTracker(
@@ -91,7 +108,9 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
         // included), so the gap-based tracking logic below sees the
         // correct elapsed-frame count either way.
         final srcFile = frameFiles[i];
+        decodeWatch.start();
         final decoded = img.decodePng(await srcFile.readAsBytes());
+        decodeWatch.stop();
         if (decoded == null) {
           await srcFile.delete();
           continue; // corrupt/unreadable frame — should not happen from a
@@ -104,6 +123,7 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
         // so the output video stays full-length/smooth without running
         // the model on every single frame.
         if ((frameIndex - 1) % frameStep == 0) {
+          inferWatch.start();
           final letterboxed = letterboxResize(decoded, _engine.inputSize);
           final inputData = imageToNchwFloat32(letterboxed.image);
           final frame = await _engine.runInferenceOnTensor(
@@ -129,9 +149,12 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
             counter.registerHit(canonical, detection.classId);
             smoother.update(canonical, detection.classId, detection.box, detection.confidence, frameIndex);
           }
+          inferWatch.stop();
+          inferredFrameCount++;
         }
         final drawables = smoother.drawable(frameIndex);
 
+        annotateWatch.start();
         annotateFrame(
           frame: decoded,
           drawables: drawables,
@@ -141,6 +164,7 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
 
         final annotatedPath = p.join(annotatedDir.path, p.basename(srcFile.path));
         await File(annotatedPath).writeAsBytes(img.encodePng(decoded));
+        annotateWatch.stop();
         if (drawables.isNotEmpty) posterFramePath ??= annotatedPath;
 
         await srcFile.delete(); // bounds disk usage — the pre-annotation
@@ -151,6 +175,15 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
       posterFramePath ??= frameFiles.isEmpty
           ? null
           : p.join(annotatedDir.path, p.basename(frameFiles.last.path)); // fallback: nothing ever detected
+
+      // ignore: avoid_print
+      print(
+        '[VideoBatch timing] frames=${frameFiles.length} inferred=$inferredFrameCount '
+        'extraction=${extractionWatch.elapsed} decode_total=${decodeWatch.elapsed} '
+        'infer_total=${inferWatch.elapsed} '
+        '(${inferredFrameCount == 0 ? 0 : inferWatch.elapsedMilliseconds ~/ inferredFrameCount}ms/inferred-frame) '
+        'annotate_encode_write_total=${annotateWatch.elapsed}',
+      );
 
       final summary = SessionSummary(
         totalUniqueLabels: counter.total,
@@ -169,6 +202,7 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
         yield BatchProgress(phase: BatchPhase.encoding, current: n, total: frameFiles.length);
       }
       await encoding.done;
+      processingWatch.stop();
 
       // ---- Phase 4: persist into the gallery (file-copy, not bytes) ----
       yield const BatchProgress(phase: BatchPhase.saving, current: 0, total: 1);
@@ -183,6 +217,8 @@ class VideoBatchRepositoryImpl implements VideoBatchRepository {
         totalUniqueLabels: summary.totalUniqueLabels,
         perClassBreakdown: summary.perClass,
         framesProcessed: summary.framesProcessed,
+        processingDurationSeconds: processingWatch.elapsedMilliseconds / 1000.0,
+        videoDurationSeconds: probe.durationSeconds,
       );
 
       yield BatchProgress(

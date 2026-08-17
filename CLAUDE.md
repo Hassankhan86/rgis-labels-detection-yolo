@@ -118,7 +118,8 @@ into it in the other direction.
 
 ## The `yolo/` training pipeline
 
-Trains the 3-class (`small`/`medium`/`large`) detector consumed by the app.
+Trains the 4-class (`small`/`medium`/`large`/`price_label`) detector
+consumed by the app.
 **The numbered scripts at `yolo/*.py` (`1-prepare_dataset.py`,
 `2-test_model.py`, `4-push_to_labelstudio.py`, `6-create_balanced_dataset.py`)
 are the actual, current pipeline** — `yolo/README.md` documents an earlier,
@@ -128,9 +129,14 @@ the README as directional context (rationale for detect-vs-segment,
 imbalance handling, hyperparameter choices) rather than an exact file map.
 
 Key facts worth knowing before touching training:
-- Dataset is small (33-43 images) and was heavily class-imbalanced
-  (`small` outnumbers `large` ~15x) — oversampling of rare-class images is a
-  deliberate step (`6-create_balanced_dataset.py`), not an omission.
+- Current dataset is `yolo/dataset4/` (108 images: 98 train / 4 valid /
+  6 test, ~4,700 label instances total), the 4-class successor to the
+  earlier 3-class `yolo/dataset2_training/` (33-43 images, now superseded
+  but left in place/tracked). `small`/`medium`/`large` are roughly balanced
+  with each other; `price_label` is the rare class (~5x fewer instances
+  than each size class) — oversampling of rare-class images is a
+  deliberate step (`6-create_balanced_dataset.py`), not an omission, and
+  still relevant for `price_label` specifically.
 - Detection, not segmentation/OBB — `onnx_detection_engine.dart` decodes a
   fixed `[1, 4 + numClasses, numBoxes]` tensor with no mask/angle channel. If
   you ever change the export task, the Dart decode logic must change with it.
@@ -142,6 +148,7 @@ Key facts worth knowing before touching training:
   `assets/models/model.onnx` — a shape mismatch (e.g. from an
   end-to-end/NMS-baked export) will silently corrupt the Dart decode loop
   rather than error loudly.
-- `venv314/`, `yolo/dataset1/`, `yolo/dataset2/`, and `yolo/test_results/` are
-  gitignored; `yolo/dataset2_training/` is intentionally tracked (its
-  `.gitignore` line is commented out).
+- `venv314/`, `yolo/dataset1/`, `yolo/dataset2/`, `yolo/dataset4_aug/`, and
+  `yolo/test_results/` are gitignored; `yolo/dataset2_training/` and
+  `yolo/dataset4/` are intentionally tracked (their `.gitignore` lines are
+  commented out).

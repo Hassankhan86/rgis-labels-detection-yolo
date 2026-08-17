@@ -149,6 +149,8 @@ class LocalStorageDatasource {
     required int totalUniqueLabels,
     required Map<String, int> perClassBreakdown,
     required int framesProcessed,
+    double? processingDurationSeconds,
+    double? videoDurationSeconds,
   }) async {
     final dir = await _capturesDir();
     final id = DateTime.now().microsecondsSinceEpoch.toString();
@@ -181,6 +183,8 @@ class LocalStorageDatasource {
       source: CaptureSource.recordedVideo,
       perClassBreakdown: perClassBreakdown,
       framesProcessed: framesProcessed,
+      processingDurationSeconds: processingDurationSeconds,
+      videoDurationSeconds: videoDurationSeconds,
     );
 
     final captures = await readIndex();

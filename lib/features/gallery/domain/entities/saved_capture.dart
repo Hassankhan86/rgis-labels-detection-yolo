@@ -14,6 +14,8 @@ class SavedCapture {
     this.perClassBreakdown,
     this.framesProcessed,
     this.thumbnailPath,
+    this.processingDurationSeconds,
+    this.videoDurationSeconds,
   });
 
   final String id;
@@ -46,6 +48,15 @@ class SavedCapture {
   /// Only set for [CaptureSource.liveSession]/[CaptureSource.recordedVideo] entries.
   final int? framesProcessed;
 
+  /// Wall-clock time the batch pipeline spent extracting, detecting, and
+  /// re-encoding -- not including the final gallery copy. Only set for
+  /// [CaptureSource.recordedVideo] entries.
+  final double? processingDurationSeconds;
+
+  /// The source recording's own length, from `ffprobe`. Only set for
+  /// [CaptureSource.recordedVideo] entries.
+  final double? videoDurationSeconds;
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'imagePath': imagePath,
@@ -55,6 +66,9 @@ class SavedCapture {
     if (perClassBreakdown != null) 'perClassBreakdown': perClassBreakdown,
     if (framesProcessed != null) 'framesProcessed': framesProcessed,
     if (thumbnailPath != null) 'thumbnailPath': thumbnailPath,
+    if (processingDurationSeconds != null)
+      'processingDurationSeconds': processingDurationSeconds,
+    if (videoDurationSeconds != null) 'videoDurationSeconds': videoDurationSeconds,
   };
 
   factory SavedCapture.fromJson(Map<String, dynamic> json) => SavedCapture(
@@ -72,5 +86,7 @@ class SavedCapture {
         ?.map((key, value) => MapEntry(key, value as int)),
     framesProcessed: json['framesProcessed'] as int?,
     thumbnailPath: json['thumbnailPath'] as String?,
+    processingDurationSeconds: (json['processingDurationSeconds'] as num?)?.toDouble(),
+    videoDurationSeconds: (json['videoDurationSeconds'] as num?)?.toDouble(),
   );
 }
